@@ -1,53 +1,70 @@
-// Import required modules
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
-const path = require("path");
-const fs = require("fs");
+const client = require("./connectionDB");
+const Users = require("./models/models");
 
-// Initialize Express
 const app = express();
 
-// Set up middlewares
-app.use(cors()); // Enable Cross-Origin Requests (CORS)
-app.use(bodyParser.json()); // Parse incoming JSON request bodies
+app.use(cors());
+app.use(bodyParser.json());
 
-// Set the port for the backend server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 8000;
 
-// Sample route to test the server
+const newUser = new Users("FooBar", "test@gmail.com", "123");
+
+console.log(newUser);
+// Root route
 app.get("/", (req, res) => {
   res.send("Hello from Node.js Backend!");
 });
 
-// Route to retrieve users from the JSON file
-app.get("/users", (req, res) => {
-  const users = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "Users.json"), "utf-8")
-  );
-  res.json(users);
+// Route to retrieve all users from DB
+app.get("/users", async (req, res) => {
+  try {
+    const result = await client.query("SELECT * FROM users");
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Error retrieving users:", err.stack);
+    res.status(500).json({ error: "Unable to retrieve users from database" });
+  }
 });
 
-// Route to add a new user
-app.post("/users", (req, res) => {
+// Route to add a new user into DB
+app.post("/users", async (req, res) => {
   const { id, firstName, lastName, email, password } = req.body;
-  const newUser = { id, firstName, lastName, email, password };
 
-  // Load existing users from the JSON file
-  const users = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "users.json"), "utf-8")
-  );
+  // Validate input
+  if (!id || !firstName || !lastName || !email || !password) {
+    return res.status(400).json({
+      error:
+        "All fields (id, firstName, lastName, email, password) are required",
+    });
+  }
 
-  // Add the new user to the array
-  users.push(newUser);
+  try {
+    // Check if the email already exists in the database
+    const checkEmailQuery = "SELECT * FROM users WHERE email = $1";
+    const checkEmailResult = await client.query(checkEmailQuery, [email]);
 
-  // Save the updated users back to the JSON file
-  fs.writeFileSync(
-    path.join(__dirname, "users.json"),
-    JSON.stringify(users, null, 2)
-  );
+    if (checkEmailResult.rows.length > 0) {
+      return res.status(400).json({ error: "Email is already in use" });
+    }
 
-  res.status(201).json(newUser);
+    // Insert the new user into the users table
+    const query = `
+      INSERT INTO users (id, first_name, last_name, email, password)
+      VALUES ($1, $2, $3, $4, $5) RETURNING *;
+    `;
+    const values = [id, firstName, lastName, email, password];
+    const result = await client.query(query, values);
+
+    const newUser = result.rows[0];
+    res.status(201).json(newUser);
+  } catch (err) {
+    console.error("Error adding user:", err.stack);
+    res.status(500).json({ error: "Unable to add user to database" });
+  }
 });
 
 // Start the server
